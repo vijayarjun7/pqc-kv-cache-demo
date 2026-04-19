@@ -239,8 +239,8 @@ that overhead substantially — this demo is a starting point for quantifying th
 tradeoff and motivating PQC-aware inference optimization research.
     """)
 
-    # ── LinkedIn / Portfolio Notes ─────────────────────────────────────────────
-    with st.expander("💼 How to explain this demo (LinkedIn / portfolio)"):
+    # ── About / Notes ─────────────────────────────────────────────────────────
+    with st.expander("💼 About this demo"):
         st.markdown("""
 **2-line hook:**
 > Quantum computers will break the encryption protecting today's AI APIs. I built a
