@@ -29,6 +29,8 @@ The **QuantRot-inspired optimization** (orthogonal rotation + int8 quantization 
 
 *Results are deterministic (`np.random.seed(42)`) but vary by hardware.*
 
+The baseline measures raw LLM projection ops (~1 matmul). PQC measures 131,072 NTT polynomial blocks — a fundamentally different workload by design, showing the overhead cost of adding post-quantum encryption to the pipeline.
+
 ---
 
 ## How to Run
@@ -61,7 +63,24 @@ benchmark_results.png  Chart output from demo.py
 
 ## What the Optimization Does
 
-Orthogonal rotation (QR decomp) decorrelates dimensions, then int8 quantization clips dynamic range for 4x byte reduction, then 4x mean-pool compression reduces NTT block count by 4x, so NTT polynomial arithmetic runs on 4x smaller input before ciphertext expansion (2x, Kyber-768 structure).
+```
+KV-cache tensor (float32)
+        |
+        v
+  Orthogonal rotation (QR decomp) -- redistributes energy across dimensions
+        |     (concentration property reduces coefficient dynamic range)
+        v
+  int8 quantization -- captures the more uniform distribution, 4x byte reduction
+        |
+        v
+  4x mean-pool compression -- reduces NTT block count by 4x
+        |
+        v
+  NTT polynomial arithmetic -- runs on 4x smaller input
+        |
+        v
+  Ciphertext (2x expansion, Kyber-768 structure)
+```
 
 Fewer NTT blocks = fewer FFT calls = lower real compute time.
 
@@ -77,4 +96,4 @@ See [RESEARCH_CONTEXT.md](RESEARCH_CONTEXT.md) for the full picture and [RESULTS
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
