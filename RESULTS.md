@@ -1,84 +1,99 @@
-# Benchmark Results
+# Results
 
-## demo.py -- Single-Run Benchmark
+Benchmark output from the PQC KV-cache overhead demo. These numbers come from
+running the simulation locally — see [Reproducibility](#reproducibility) to
+regenerate them yourself.
 
-### KV-Cache Configuration
+## Hardware
 
-| Parameter | Value |
-|-----------|-------|
-| Layers | 32 |
-| Tokens | 512 |
-| Heads | 16 |
-| Head dim | 64 |
-| Total float32 values | 16,777,216 |
-| Raw tensor size | ~64 MB |
-| Random seed | 42 (deterministic) |
+<!-- Fill in with your machine's details before publishing results -->
 
-### Results
+- **Device:**
+- **CPU:**
+- **RAM:**
+- **OS:**
+- **Python version:**
+- **NumPy version:**
 
-| Mode | Latency (s) | Peak Memory (MB) | vs Baseline |
-|------|-------------|------------------|-------------|
-| Baseline | ~0.058 | ~196 | -- |
-| PQC (simulated Kyber) | ~9.982 | ~452 | +17,072% latency, +130% memory |
-| Optimized PQC | ~2.889 | ~192 | -71.1% latency vs PQC, -57.5% memory vs PQC |
+## Results Table
 
-*Numbers are representative -- vary by CPU, memory bandwidth, and Python version.*
+| Mode          | Latency | Memory | Delta                                     |
+|---------------|---------|--------|--------------------------------------------|
+| Baseline      | ~0.06s  | ~196 MB | —                                          |
+| PQC simulated | ~10.0s  | ~452 MB | +17,000% latency, +130% memory             |
+| Optimized PQC | ~2.9s   | ~192 MB | -71% vs PQC, -57% vs PQC memory            |
 
-### What drives each number
+The optimized path recovers most of the latency lost to the simulated PQC
+overhead while landing at roughly the same memory footprint as the baseline.
 
-**Baseline** -- single matrix projection (16384x1024 @ 1024x1024), layer-norm, tanh activation. Dominated by one BLAS matmul.
+## Reproducibility
 
-**PQC** -- 131,072 NTT blocks x (rfft + polynomial multiply + irfft + mod 3329). No vectorisation across blocks in demo.py; Python loop is the bottleneck, which amplifies the overhead relative to production.
+- All runs use `np.random.seed(42)`, so the random matrices, key polynomials,
+  and rotation matrices are identical across runs on the same hardware.
+- Results are deterministic given the seed, but **absolute timings depend on
+  hardware** (CPU architecture, clock speed, memory bandwidth, and BLAS/FFT
+  backend). Relative deltas (percent overhead, percent speedup) should be
+  fairly stable across machines; absolute seconds will not be.
 
-**Optimized PQC** -- QR orthogonal rotation + int8 quantization reduces the float32 tensor to int8 (4x byte reduction), then byte-reinterpretation as float32 halves the block count again. Net: ~4x fewer NTT iterations -> ~71% latency recovery vs naive PQC.
+## Expected Ranges by Hardware
 
----
+| Hardware        | Baseline    | PQC simulated | Optimized PQC |
+|-----------------|-------------|----------------|----------------|
+| MacBook M1/M2    | 0.04–0.08s  | 6–12s          | 1.5–4s         |
+| Intel i7/i9      | 0.05–0.1s   | 8–15s          | 2–5s           |
+| Cloud GPU        | 0.02–0.05s  | 4–8s           | 1–3s           |
 
-## app.py -- API Load Simulator
+Note that this benchmark is CPU-bound (FFT and matmul on NumPy arrays), so
+"Cloud GPU" here reflects the host CPU of a typical GPU instance, not GPU
+acceleration — nothing in this demo runs on the GPU.
 
-The Streamlit dashboard (streamlit run app.py) sweeps 6 checkpoints from 1% to 100% of a configurable max request count and reports **per-request** average latency, throughput (req/s), and peak batch memory.
+## What Each Mode Measures
 
-### Simulation constants (simulation.py)
+### Baseline
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| HEADS | 8 | attention heads per request |
-| HEAD_DIM | 32 | per-head dimension |
-| NTT_BLOCK | 32 | polynomial block size |
-| KYBER_Q | 3329 | Kyber modulus |
-| EXPANSION | 2 | ciphertext expansion factor |
+- Flatten KV tensor to `(16384, 1024)`.
+- Matmul with a random `(1024, 1024)` weight matrix `W`.
+- Layer-norm surrogate + tanh activation.
+- Measures raw LLM projection overhead with no cryptographic operations —
+  this is the reference cost of touching the KV cache at all.
 
-### Typical output at payload_scale=4, max_requests=100
+### PQC simulated
 
-| Mode | Avg Latency | Throughput | Peak Memory |
-|------|-------------|------------|-------------|
-| Baseline | ~0.02 ms | ~800 req/s | ~0.5 MB |
-| Secure | ~0.15 ms | ~120 req/s | ~1.2 MB |
-| Optimized Secure | ~0.05 ms | ~380 req/s | ~0.6 MB |
+- Reshape to `(-1, 64)` → 131,072 blocks.
+- Each block: forward FFT → multiply by a random complex key polynomial →
+  inverse FFT → mod 3329.
+- Allocate a 2x ciphertext expansion array.
+- Measures the overhead shape of Kyber's NTT-based polynomial arithmetic
+  applied per KV block, plus the memory cost of ciphertext expansion.
 
-*Exact numbers vary by hardware. Run `streamlit run app.py` to generate your own.*
+### Optimized PQC
 
----
+- QR decomposition on a random `(64, 64)` matrix → orthogonal `Q`.
+- Rotate all head vectors: `kv.reshape(-1, 64) @ Q.T`.
+- int8-quantize with a global scale (4x byte reduction).
+- Dequantize → run the same NTT loop on the smaller representation.
+- Measures the overhead of a QuantRot-inspired optimization: rotate into a
+  basis that concentrates values, quantize to int8, then pay the NTT cost on
+  a representation that's a quarter the size.
 
-## Reproducibility Notes
+## Simulation Methodology
 
-- `demo.py` sets `np.random.seed(42)` globally -- results are deterministic on the same hardware.
-- `simulation.py` uses `np.random.default_rng(seed + i)` per request -- also deterministic per payload_scale/max_requests combination.
-- Both tools measure wall-clock time with `time.perf_counter()` and memory with `tracemalloc` (Python heap only).
-- Results scale approximately linearly with tensor size. Halving TOKENS or LAYERS roughly halves PQC latency.
+This demo approximates cryptographic and optimization costs; it is **not** a
+production PQC implementation. Specifically:
 
----
-
-## Simulation Limitations
-
-These results are from a **NumPy FFT simulation**, not a production Kyber implementation.
-
-| Aspect | This demo | Production Kyber |
-|--------|-----------|-----------------|
-| NTT arithmetic | numpy.fft (float64) | Integer NTT over Z_3329 |
-| Key generation | Random complex array | Actual lattice key gen |
-| Security | None (simulation) | 128-bit post-quantum |
-| Constant factors | Higher (Python overhead) | Lower (C/SIMD) |
-| Overhead ratio | Structurally plausible | Hardware-dependent |
-
-The overhead *ratio* (PQC vs Baseline) is structurally sound. The absolute numbers are not comparable to production.
+- The NTT (number-theoretic transform) used in real Kyber is over the ring
+  `Z_q` with `q = 3329`. This demo uses NumPy's FFT as a stand-in — it has a
+  comparable computational shape (O(n log n) butterfly structure) but is not
+  a modular NTT and provides no actual security guarantees.
+- The int8 optimization is genuinely faster: it produces a real speedup from
+  reduced cache footprint, not a simulated one. Smaller data fits more
+  comfortably in cache, which is why the optimized path's speedup is
+  reproducible and not just a scaling artifact.
+- The int8 → float32 dequantization step byte-reinterprets data so that 4
+  int8 values pack into a single float32 slot, matching the 4x reduction
+  claimed above.
+- This is **not liboqs**, not constant-time, and not suitable for security
+  claims of any kind. If you need real Kyber benchmarks, use
+  [liboqs](https://github.com/open-quantum-safe/liboqs) or a vetted PQC
+  library instead. This repo exists to make the *shape* of the overhead
+  intuitive, not to certify performance of an actual PQC scheme.

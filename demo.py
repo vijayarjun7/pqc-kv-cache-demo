@@ -4,6 +4,12 @@ Simulates post-quantum cryptography latency/memory cost on LLM KV-cache data
 and shows improvement after a QuantRot-inspired optimization step.
 """
 
+# NOTE: This simulates Kyber NTT arithmetic for demonstration
+# purposes only. NTT transforms use NumPy FFT as a structural
+# stand-in for true Number Theoretic Transforms over Z_q (q=3329).
+# Not a production Kyber implementation. Use liboqs for real
+# benchmarks.
+
 import time
 import tracemalloc
 import numpy as np
@@ -230,7 +236,7 @@ Real-World Connection (6 lines):
   but their NTT polynomial arithmetic and ~2x ciphertext expansion add serious
   latency/memory cost at inference time. The QuantRot optimization (orthogonal
   rotation + int8 quantization) reduces data size before encryption, cutting
-  PQC overhead by 30-50% — making quantum-safe LLM inference practically viable.
+  PQC overhead by ~60-75% — making quantum-safe LLM inference practically viable.
 """)
 
 
